@@ -101,9 +101,18 @@ def _user_output_path(user: AuthenticatedUser, requested_name: str, default_stem
 
 def _resolve_user_input(user: AuthenticatedUser, relative_path: str) -> Path:
     settings = get_settings()
+    expected_prefix = f"users/{user.storage_folder}/"
+    if relative_path.startswith("users/") and not relative_path.startswith(expected_prefix):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: cannot access another user's files.",
+        )
     user_root = (settings.STORAGE_ROOT / "users" / user.storage_folder).resolve()
-    rel = relative_path.removeprefix(f"users/{user.storage_folder}/")
-    return resolve_safe_path(rel, user_root)
+    rel = relative_path.removeprefix(expected_prefix)
+    resolved = resolve_safe_path(rel, user_root)
+    if not resolved.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Input file not found.")
+    return resolved
 
 
 class ImageToPdfRequest(BaseModel):

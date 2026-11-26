@@ -100,6 +100,7 @@ def render_smart_sequence_section(uploaded_files, state_prefix: str) -> list[dic
     sig = tuple((uf.name, uf.size) for uf in uploaded_files)
     cache_key = f"{state_prefix}_seq_cache"
     sig_key = f"{state_prefix}_seq_sig"
+    mode_cache_key = f"{state_prefix}_seq_mode_used"
 
     with st.container(border=True):
         st.subheader("Smart Sequence Detection")
@@ -116,17 +117,24 @@ def render_smart_sequence_section(uploaded_files, state_prefix: str) -> list[dic
         with c3:
             reanalyze = st.button("Re-analyse", icon=":material/refresh:", key=f"{state_prefix}_reanalyze", width="stretch")
 
-        if st.session_state.get(sig_key) != sig or reanalyze or cache_key not in st.session_state:
+        effective_req_mode = sort_mode if auto_enabled else "Original Upload Order"
+        if (
+            st.session_state.get(sig_key) != sig
+            or st.session_state.get(mode_cache_key) != effective_req_mode
+            or reanalyze
+            or cache_key not in st.session_state
+        ):
             saved = upload_many_to_backend(uploaded_files)
             analysis = api_post(
                 "/api/pdf/analyze-sequence",
                 {
                     "input_paths": [s["relative_path"] for s in saved],
-                    "sort_mode": sort_mode if auto_enabled else "Original Upload Order",
+                    "sort_mode": effective_req_mode,
                 },
             )
             st.session_state[cache_key] = analysis
             st.session_state[sig_key] = sig
+            st.session_state[mode_cache_key] = effective_req_mode
 
         analysis = st.session_state[cache_key]
         items = analysis["items"]
@@ -150,8 +158,8 @@ def render_smart_sequence_section(uploaded_files, state_prefix: str) -> list[dic
                     "Extracted heading/title": it.get("extracted_heading") or it["filename"],
                     "Detection method": it["detection_method"],
                     "Confidence": f"{int(it['confidence'] * 100)}% ({it['confidence_label']})",
-                    "Original upload position": it["original_index"] + 1,
                     "Status": it["status"],
+                    "Evidence": it.get("evidence_text") or "",
                 }
                 for it in items
             ]
@@ -160,7 +168,7 @@ def render_smart_sequence_section(uploaded_files, state_prefix: str) -> list[dic
             df,
             width="stretch",
             hide_index=True,
-            disabled=["Filename", "Detection method", "Confidence", "Original upload position", "Status"],
+            disabled=["Filename", "Detection method", "Confidence", "Status", "Evidence"],
             key=f"{state_prefix}_seq_editor",
             alt="Smart sequence detection table",
         )
@@ -189,5 +197,23 @@ def render_smart_sequence_section(uploaded_files, state_prefix: str) -> list[dic
         with b2:
             if st.button("Accept suggested sequence", key=f"{state_prefix}_accept_seq", type="secondary", width="stretch"):
                 st.toast("Sequence accepted.")
+
+        with st.expander("Inspect original image & OCR evidence", expanded=False):
+            file_map = {uf.name: uf for uf in uploaded_files}
+            item_labels = [f"{it['proposed_order']}. {it['filename']} ({it['status']})" for it in items]
+            chosen_lbl = st.selectbox("Select file to inspect", options=item_labels, key=f"{state_prefix}_inspect_sel")
+            chosen_it = items[item_labels.index(chosen_lbl)]
+            ic1, ic2 = st.columns([1, 2])
+            with ic1:
+                orig_uf = next((uf for name, uf in file_map.items() if chosen_it["filename"].endswith(name)), None)
+                if orig_uf and orig_uf.name.lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp")):
+                    st.image(orig_uf, caption=orig_uf.name, width="stretch")
+                else:
+                    st.info("Image preview available for image files.")
+            with ic2:
+                st.markdown(f"**Method:** `{chosen_it['detection_method']}` | **Confidence:** `{int(chosen_it['confidence']*100)}% ({chosen_it['confidence_label']})`")
+                st.markdown(f"**Evidence:** `{chosen_it.get('evidence_text', '')}`")
+                if chosen_it.get("confidence_reason"):
+                    st.caption(f"Reason: {chosen_it['confidence_reason']}")
 
         return items

@@ -84,6 +84,11 @@ class Settings(BaseSettings):
     SESSION_TTL_MINUTES: int = 480
     SESSION_COOKIE_SECURE: bool = True
 
+    # Optional local Vision-Model fallback for ambiguous OCR pages (disabled by default)
+    VISION_FALLBACK_ENABLED: bool = False
+    OLLAMA_BASE_URL: str = ""
+    OLLAMA_VISION_MODEL: str = ""
+
     @property
     def max_upload_bytes(self) -> int:
         return self.MAX_UPLOAD_MB * 1024 * 1024
