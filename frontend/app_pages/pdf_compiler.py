@@ -1,12 +1,11 @@
-"""Multi-format PDF Compiler combining images, documents, and PDFs in user-defined order."""
-from pathlib import Path
+"""Multi-format PDF Compiler with Smart Sequence Detection."""
 import streamlit as st
 
 from frontend.api_client import api_post
 from frontend.components.ui import (
     render_generated_pdf_result,
+    render_smart_sequence_section,
     show_api_error,
-    upload_many_to_backend,
 )
 
 st.caption("Combine PNG/JPG images, DOCX/TXT/MD/XLSX/PPTX documents, and existing PDFs into one ordered PDF.")
@@ -18,33 +17,11 @@ uploaded = st.file_uploader(
 )
 
 if uploaded:
-    if "compiler_items" not in st.session_state or len(st.session_state.compiler_items) != len(uploaded):
-        st.session_state.compiler_items = [
-            {"idx": i, "section": Path(uf.name).stem} for i, uf in enumerate(uploaded)
-        ]
-
-    with st.container(border=True):
-        st.subheader("Compilation order & section names")
-        items = st.session_state.compiler_items
-        for pos, item in enumerate(items):
-            uf = uploaded[item["idx"]]
-            c1, c2, c3, c4 = st.columns([3, 1, 1, 1], vertical_alignment="bottom")
-            with c1:
-                item["section"] = st.text_input(
-                    f"Item {pos + 1}: {uf.name}",
-                    value=item["section"],
-                    key=f"comp_sec_{pos}_{item['idx']}",
-                )
-            with c2:
-                st.caption(f"{uf.size / 1024:.1f} KB")
-            with c3:
-                if pos > 0 and st.button("Up", key=f"comp_up_{pos}", icon=":material/arrow_upward:", width="stretch"):
-                    items[pos - 1], items[pos] = items[pos], items[pos - 1]
-                    st.rerun()
-            with c4:
-                if pos < len(items) - 1 and st.button("Down", key=f"comp_dn_{pos}", icon=":material/arrow_downward:", width="stretch"):
-                    items[pos + 1], items[pos] = items[pos], items[pos + 1]
-                    st.rerun()
+    try:
+        ordered_items = render_smart_sequence_section(uploaded, state_prefix="compiler")
+    except Exception as exc:
+        show_api_error(exc)
+        st.stop()
 
     with st.container(border=True):
         st.subheader("Output configuration")
@@ -64,11 +41,12 @@ if uploaded:
 
         if st.button("Compile PDF", type="primary", icon=":material/layers:", width="stretch"):
             try:
-                ordered_files = [uploaded[it["idx"]] for it in st.session_state.compiler_items]
-                saved = upload_many_to_backend(ordered_files)
                 payload_items = [
-                    {"path": s["relative_path"], "section_title": it["section"]}
-                    for s, it in zip(saved, st.session_state.compiler_items)
+                    {
+                        "path": it["relative_path"],
+                        "section_title": it.get("extracted_heading") or it["filename"],
+                    }
+                    for it in ordered_items
                 ]
                 with st.spinner("Compiling mixed formats into unified PDF..."):
                     res = api_post(

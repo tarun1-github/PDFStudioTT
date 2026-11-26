@@ -14,6 +14,7 @@ from backend.security.auth import AuthenticatedUser, get_current_user
 from backend.security.storage import ensure_user_folders, resolve_safe_path, sanitize_filename
 from backend.services.compiler_service import CompilerItem, compile_mixed_documents
 from backend.services.document_pdf_service import convert_document_to_pdf
+from backend.services.document_sequence_service import analyze_document_sequence
 from backend.services.image_pdf_service import images_to_pdf
 from backend.services.job_service import JOB_COMPLETED, log_audit, utcnow
 from backend.services.learning_book_service import LearningSection, create_learning_book
@@ -140,6 +141,23 @@ def run_document_to_pdf(
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return _record_sync_result(db, user, "document_to_pdf", req.model_dump(), out.stem, out, res)
+
+
+class AnalyzeSequenceRequest(BaseModel):
+    input_paths: list[str]
+    sort_mode: str = "Automatic Detection"
+
+
+@router.post("/analyze-sequence")
+def run_analyze_sequence(
+    req: AnalyzeSequenceRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+) -> dict:
+    entries = [(_resolve_user_input(user, p), p) for p in req.input_paths]
+    try:
+        return analyze_document_sequence(entries, sort_mode=req.sort_mode)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 class CompileItemModel(BaseModel):

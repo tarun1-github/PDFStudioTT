@@ -1,8 +1,25 @@
 """Reusable SaaS-style UI components for PDF Studio."""
+import importlib.util
+
 import httpx
+import pandas as pd
 import streamlit as st
 
-from frontend.api_client import api_download_bytes, api_upload_file
+from frontend.api_client import api_download_bytes, api_post, api_upload_file
+
+SMART_SORT_MODES = [
+    "Automatic Detection",
+    "Original Upload Order",
+    "Sort by Page Number",
+    "Sort by Chapter Number",
+    "Chapter then Page Number",
+    "Manual Ordering",
+]
+
+
+def is_pdf_preview_available() -> bool:
+    """Return True if the streamlit-pdf viewer package is installed in the active venv."""
+    return importlib.util.find_spec("streamlit_pdf") is not None
 
 
 def format_bytes(num_bytes: int) -> str:
@@ -56,7 +73,7 @@ def render_generated_pdf_result(result: dict, label: str = "Download generated P
         title="PDF ready",
     )
     pdf_bytes = api_download_bytes(f"/api/files/documents/{doc_uuid}/download")
-    col1, col2 = st.columns([1, 3])
+    col1, _col2 = st.columns([1, 3])
     with col1:
         st.download_button(
             label=label,
@@ -68,4 +85,109 @@ def render_generated_pdf_result(result: dict, label: str = "Download generated P
             width="stretch",
         )
     with st.expander("Preview generated PDF", expanded=True):
-        st.pdf(pdf_bytes, alt=f"Preview of {filename}")
+        if is_pdf_preview_available():
+            st.pdf(pdf_bytes, alt=f"Preview of {filename}")
+        else:
+            st.warning(
+                "Inline PDF preview requires `streamlit-pdf`. Install it in `.venv` with "
+                "`pip install \"streamlit[pdf]\"`. You can still download the PDF above.",
+                title="PDF preview component unavailable",
+            )
+
+
+def render_smart_sequence_section(uploaded_files, state_prefix: str) -> list[dict]:
+    """Reusable Smart Sequence Detection UI returning ordered item dicts with heading & path."""
+    sig = tuple((uf.name, uf.size) for uf in uploaded_files)
+    cache_key = f"{state_prefix}_seq_cache"
+    sig_key = f"{state_prefix}_seq_sig"
+
+    with st.container(border=True):
+        st.subheader("Smart Sequence Detection")
+        c1, c2, c3 = st.columns([2, 2, 1], vertical_alignment="bottom")
+        with c1:
+            auto_enabled = st.toggle("Enable automatic sequencing", value=True, key=f"{state_prefix}_auto_seq")
+        with c2:
+            sort_mode = st.selectbox(
+                "Sorting mode",
+                options=SMART_SORT_MODES,
+                index=0 if auto_enabled else 1,
+                key=f"{state_prefix}_sort_mode",
+            )
+        with c3:
+            reanalyze = st.button("Re-analyse", icon=":material/refresh:", key=f"{state_prefix}_reanalyze", width="stretch")
+
+        if st.session_state.get(sig_key) != sig or reanalyze or cache_key not in st.session_state:
+            saved = upload_many_to_backend(uploaded_files)
+            analysis = api_post(
+                "/api/pdf/analyze-sequence",
+                {
+                    "input_paths": [s["relative_path"] for s in saved],
+                    "sort_mode": sort_mode if auto_enabled else "Original Upload Order",
+                },
+            )
+            st.session_state[cache_key] = analysis
+            st.session_state[sig_key] = sig
+
+        analysis = st.session_state[cache_key]
+        items = analysis["items"]
+
+        st.caption(
+            f"Resolved mode: **{analysis.get('resolved_mode')}** | "
+            f"OCR engine: `{analysis.get('ocr_engine', 'none')}`"
+        )
+        for dup in analysis.get("duplicates", []):
+            st.warning(dup, title="Duplicate page detected")
+        for miss in analysis.get("missing_pages", []):
+            st.warning(miss, title="Missing sequence number")
+
+        df = pd.DataFrame(
+            [
+                {
+                    "Proposed order": it["proposed_order"],
+                    "Filename": it["filename"],
+                    "Detected chapter": it.get("detected_chapter") or "",
+                    "Detected page": it.get("detected_page_display") or "",
+                    "Extracted heading/title": it.get("extracted_heading") or it["filename"],
+                    "Detection method": it["detection_method"],
+                    "Confidence": f"{int(it['confidence'] * 100)}% ({it['confidence_label']})",
+                    "Original upload position": it["original_index"] + 1,
+                    "Status": it["status"],
+                }
+                for it in items
+            ]
+        )
+        edited = st.data_editor(
+            df,
+            width="stretch",
+            hide_index=True,
+            disabled=["Filename", "Detection method", "Confidence", "Original upload position", "Status"],
+            key=f"{state_prefix}_seq_editor",
+            alt="Smart sequence detection table",
+        )
+
+        # Apply manual table edits (order, chapter, page, heading)
+        for idx, row in edited.iterrows():
+            raw_order = row["Proposed order"]
+            items[idx]["proposed_order"] = int(raw_order) if pd.notna(raw_order) else (idx + 1)
+            items[idx]["detected_chapter"] = str(row["Detected chapter"]).strip() or None
+            raw_pg = str(row["Detected page"]).strip()
+            items[idx]["detected_page_display"] = raw_pg or None
+            if raw_pg.isdigit():
+                items[idx]["detected_page"] = int(raw_pg)
+            items[idx]["extracted_heading"] = str(row["Extracted heading/title"]).strip() or items[idx]["filename"]
+        items.sort(key=lambda x: (x["proposed_order"], x["original_index"]))
+        for pos, it in enumerate(items, start=1):
+            it["proposed_order"] = pos
+
+        b1, b2, _b3 = st.columns([1, 1, 2])
+        with b1:
+            if st.button("Restore original order", key=f"{state_prefix}_restore_orig", width="stretch"):
+                items.sort(key=lambda x: x["original_index"])
+                for pos, it in enumerate(items, start=1):
+                    it["proposed_order"] = pos
+                st.rerun()
+        with b2:
+            if st.button("Accept suggested sequence", key=f"{state_prefix}_accept_seq", type="secondary", width="stretch"):
+                st.toast("Sequence accepted.")
+
+        return items

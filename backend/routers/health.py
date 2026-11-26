@@ -12,6 +12,7 @@ from backend.database.models import PdfJob
 from backend.database.session import get_db
 from backend.security.storage import ensure_storage_layout
 from backend.services.document_pdf_service import detect_libreoffice
+from backend.services.document_sequence_service import detect_ocr_engine
 from backend.services.job_service import JOB_FAILED, JOB_PROCESSING, JOB_QUEUED
 
 router = APIRouter(prefix="/health", tags=["Health"])
@@ -41,6 +42,7 @@ def dependencies_health() -> dict:
         "storage_ready": storage_path.exists(),
         "disk_free_gb": round(usage.free / (1024 ** 3), 2),
         "disk_total_gb": round(usage.total / (1024 ** 3), 2),
+        "ocr_engine": detect_ocr_engine(),
         "oidc_enabled": settings.OIDC_ENABLED,
     }
 

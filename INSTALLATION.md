@@ -15,7 +15,7 @@
    cd E:\Projects\PDFStudio\app
    .\scripts\setup_environment.ps1
    ```
-2. Install Python dependencies:
+2. Install Python dependencies (includes `streamlit[pdf]` / `streamlit-pdf` for inline PDF previews):
    ```powershell
    .\scripts\install_dependencies.ps1
    ```
