@@ -201,3 +201,142 @@ class ApplicationSetting(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class DocumentCategory(Base):
+    __tablename__ = "document_categories"
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_doc_categories_name"),
+        {"schema": SCHEMA_NAME},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(NVARCHAR(100), nullable=False)
+    description: Mapped[str | None] = mapped_column(NVARCHAR(255), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class DocumentTag(Base):
+    __tablename__ = "document_tags"
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_doc_tags_name"),
+        {"schema": SCHEMA_NAME},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(NVARCHAR(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class GovernedDocument(Base):
+    __tablename__ = "documents"
+    __table_args__ = (
+        UniqueConstraint("doc_key", name="uq_documents_doc_key"),
+        Index("ix_documents_status", "status"),
+        Index("ix_documents_owner", "owner_user_id"),
+        {"schema": SCHEMA_NAME},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    doc_key: Mapped[str] = mapped_column(NVARCHAR(64), nullable=False)
+    title: Mapped[str] = mapped_column(NVARCHAR(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(NVARCHAR(2000), nullable=True)
+    owner_user_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA_NAME}.users.id"), nullable=False)
+    category_id: Mapped[int | None] = mapped_column(
+        ForeignKey(f"{SCHEMA_NAME}.document_categories.id"), nullable=True
+    )
+    technology: Mapped[str | None] = mapped_column(NVARCHAR(100), nullable=True)
+    current_version: Mapped[str] = mapped_column(NVARCHAR(32), default="1.0", nullable=False)
+    status: Mapped[str] = mapped_column(NVARCHAR(32), default="DRAFT", nullable=False)
+    review_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    archive_reason: Mapped[str | None] = mapped_column(NVARCHAR(500), nullable=True)
+    archived_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(f"{SCHEMA_NAME}.users.id"), nullable=True
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    view_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    download_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class DocumentVersion(Base):
+    __tablename__ = "document_versions"
+    __table_args__ = (
+        UniqueConstraint("document_id", "version_number", name="uq_doc_version_pair"),
+        Index("ix_doc_versions_doc_id", "document_id"),
+        {"schema": SCHEMA_NAME},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA_NAME}.documents.id", ondelete="CASCADE"), nullable=False
+    )
+    version_number: Mapped[str] = mapped_column(NVARCHAR(32), nullable=False)
+    filename: Mapped[str] = mapped_column(NVARCHAR(255), nullable=False)
+    relative_path: Mapped[str] = mapped_column(NVARCHAR(500), nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256_hash: Mapped[str] = mapped_column(NVARCHAR(64), nullable=False)
+    uploaded_by_user_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA_NAME}.users.id"), nullable=False)
+    status: Mapped[str] = mapped_column(NVARCHAR(32), default="DRAFT", nullable=False)
+    is_immutable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    restored_from_version_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class DocumentTagMapping(Base):
+    __tablename__ = "document_tag_mapping"
+    __table_args__ = (
+        UniqueConstraint("document_id", "tag_id", name="uq_doc_tag_pair"),
+        {"schema": SCHEMA_NAME},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA_NAME}.documents.id", ondelete="CASCADE"), nullable=False
+    )
+    tag_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA_NAME}.document_tags.id", ondelete="CASCADE"), nullable=False
+    )
+
+
+class DocumentApproval(Base):
+    __tablename__ = "document_approvals"
+    __table_args__ = (
+        Index("ix_doc_approvals_doc_id", "document_id"),
+        {"schema": SCHEMA_NAME},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA_NAME}.documents.id", ondelete="CASCADE"), nullable=False
+    )
+    version_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA_NAME}.document_versions.id"), nullable=False
+    )
+    reviewer_user_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA_NAME}.users.id"), nullable=False)
+    action: Mapped[str] = mapped_column(NVARCHAR(50), nullable=False)
+    from_status: Mapped[str] = mapped_column(NVARCHAR(32), nullable=False)
+    to_status: Mapped[str] = mapped_column(NVARCHAR(32), nullable=False)
+    comments: Mapped[str | None] = mapped_column(NVARCHAR(2000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class DocumentAccessEvent(Base):
+    __tablename__ = "document_access_events"
+    __table_args__ = (
+        Index("ix_doc_access_doc_id", "document_id"),
+        {"schema": SCHEMA_NAME},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA_NAME}.documents.id", ondelete="CASCADE"), nullable=False
+    )
+    version_id: Mapped[int | None] = mapped_column(
+        ForeignKey(f"{SCHEMA_NAME}.document_versions.id"), nullable=True
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA_NAME}.users.id"), nullable=False)
+    event_type: Mapped[str] = mapped_column(NVARCHAR(32), nullable=False)  # VIEW, DOWNLOAD
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

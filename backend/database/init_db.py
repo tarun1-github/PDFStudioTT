@@ -3,7 +3,21 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.config import get_settings
-from backend.database.models import ApplicationSetting, Role, User, UserRole
+from backend.database.models import ApplicationSetting, DocumentCategory, Role, User, UserRole
+
+DEFAULT_CATEGORIES = [
+    "Cisco Collaboration",
+    "CUCM",
+    "Unity Connection",
+    "SIP and Voice Gateways",
+    "Linux",
+    "Automation",
+    "Python",
+    "AI and Agentic AI",
+    "RAG",
+    "Training and Learning",
+    "General Technical Documentation",
+]
 
 DEFAULT_ROLES = [
     ("Engineer", "Upload, convert, compile, download personal docs, view shared library."),
@@ -61,5 +75,12 @@ def seed_database(db: Session) -> None:
         )
         if existing is None:
             db.add(ApplicationSetting(setting_key=key, setting_value=val, description=desc))
+
+    for cat_name in DEFAULT_CATEGORIES:
+        existing_cat = db.scalar(
+            select(DocumentCategory).where(DocumentCategory.name == cat_name)
+        )
+        if existing_cat is None:
+            db.add(DocumentCategory(name=cat_name, is_active=True))
 
     db.commit()
