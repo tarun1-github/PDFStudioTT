@@ -1,6 +1,7 @@
 # PDF Studio Documentation Index
 
 ## Core Guides
+- [Product Overview](PRODUCT_OVERVIEW.md)
 - [User Guide](USER_GUIDE.md)
 - [Admin Guide](ADMIN_GUIDE.md)
 - [Installation Guide](INSTALLATION.md)
