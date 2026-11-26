@@ -3,7 +3,7 @@ import json
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -17,7 +17,13 @@ from backend.services.document_pdf_service import convert_document_to_pdf
 from backend.services.document_sequence_service import analyze_document_sequence
 from backend.services.image_pdf_service import images_to_pdf
 from backend.services.job_service import JOB_COMPLETED, log_audit, utcnow
-from backend.services.learning_book_service import LearningSection, create_learning_book
+from backend.services.learning_book_service import (
+    LearningBookConfig,
+    LearningSection,
+    publish_learning_book,
+    render_cover_preview_png,
+)
+from backend.services.pdf_optimization_service import optimize_pdf
 from backend.services.pdf_manager_service import (
     add_bookmarks,
     add_header_footer,
@@ -191,16 +197,62 @@ def run_compile_pdf(
 class LearningSectionModel(BaseModel):
     heading: str
     path: str
+    chapter_number: str | None = None
+    chapter_title: str | None = None
+    subtitle: str = ""
+    overview: str = ""
+    level: int = 1
 
 
 class LearningBookRequest(BaseModel):
     title: str
     subtitle: str = ""
     author: str = ""
+    organization: str = ""
     date_str: str = ""
+    version: str = "1.0"
+    classification: str = ""
     template_name: str = "Corporate Technical Manual"
+    page_orientation: str = "portrait"
+    logo_path: str | None = None
+    include_toc: bool = True
+    toc_title: str = "Table of Contents"
+    include_dividers: bool = False
+    divider_style: str = "Classic Banner"
+    count_dividers_in_numbering: bool = True
+    header_text: str = ""
+    footer_text: str = ""
+    page_number_style: str = "Page 1 of N"
+    roman_preliminary: bool = True
+    hf_alignment: str = "right"
+    skip_first_chapter_hf: bool = False
+    meta_subject: str = ""
+    meta_keywords: str = ""
+    compression_mode: str = "Original Quality"
     sections: list[LearningSectionModel]
     output_filename: str = "learning_book.pdf"
+
+
+@router.post("/learning-book/preview-cover")
+def preview_learning_book_cover(
+    req: LearningBookRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+) -> Response:
+    logo = _resolve_user_input(user, req.logo_path) if req.logo_path else None
+    cfg = LearningBookConfig(
+        title=req.title,
+        subtitle=req.subtitle,
+        author=req.author or user.display_name,
+        organization=req.organization,
+        date_str=req.date_str,
+        version=req.version,
+        classification=req.classification,
+        template_name=req.template_name,
+        page_orientation=req.page_orientation,
+        logo_path=logo,
+    )
+    png_bytes = render_cover_preview_png(cfg)
+    return Response(content=png_bytes, media_type="image/png")
 
 
 @router.post("/learning-book")
@@ -209,21 +261,91 @@ def run_learning_book(
     user: AuthenticatedUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    sections = [LearningSection(s.heading, _resolve_user_input(user, s.path)) for s in req.sections]
+    sections = [
+        LearningSection(
+            heading=s.heading,
+            file_path=_resolve_user_input(user, s.path),
+            chapter_number=s.chapter_number,
+            chapter_title=s.chapter_title,
+            subtitle=s.subtitle,
+            overview=s.overview,
+            level=s.level,
+        )
+        for s in req.sections
+    ]
+    logo = _resolve_user_input(user, req.logo_path) if req.logo_path else None
+    cfg = LearningBookConfig(
+        title=req.title,
+        subtitle=req.subtitle,
+        author=req.author or user.display_name,
+        organization=req.organization,
+        date_str=req.date_str,
+        version=req.version,
+        classification=req.classification,
+        template_name=req.template_name,
+        page_orientation=req.page_orientation,
+        logo_path=logo,
+        include_toc=req.include_toc,
+        toc_title=req.toc_title,
+        include_dividers=req.include_dividers,
+        divider_style=req.divider_style,
+        count_dividers_in_numbering=req.count_dividers_in_numbering,
+        header_text=req.header_text,
+        footer_text=req.footer_text,
+        page_number_style=req.page_number_style,
+        roman_preliminary=req.roman_preliminary,
+        hf_alignment=req.hf_alignment,
+        skip_first_chapter_hf=req.skip_first_chapter_hf,
+        meta_subject=req.meta_subject,
+        meta_keywords=req.meta_keywords,
+        compression_mode=req.compression_mode,
+    )
     out = _user_output_path(user, req.output_filename, "learning_book")
     try:
-        res = create_learning_book(
-            output_path=out,
-            title=req.title,
-            subtitle=req.subtitle,
-            author=req.author or user.display_name,
-            date_str=req.date_str,
-            template_name=req.template_name,
-            sections=sections,
-        )
+        res = publish_learning_book(cfg, sections, out)
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    return _record_sync_result(db, user, "learning_book", req.model_dump(), req.title, out, res)
+    record = _record_sync_result(db, user, "learning_book", req.model_dump(), req.title, out, res)
+    record.update(
+        {
+            "original_size_bytes": res.get("original_size_bytes"),
+            "reduction_pct": res.get("reduction_pct"),
+            "readability_warning": res.get("readability_warning"),
+            "toc_entries": res.get("toc_entries"),
+            "bookmarks_count": res.get("bookmarks_count"),
+        }
+    )
+    return record
+
+
+class OptimizePdfRequest(BaseModel):
+    input_path: str
+    mode: str = "Balanced"
+    output_filename: str = "optimized.pdf"
+
+
+@router.post("/optimize")
+def run_optimize_pdf(
+    req: OptimizePdfRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    inp = _resolve_user_input(user, req.input_path)
+    out = _user_output_path(user, req.output_filename, inp.stem)
+    try:
+        res = optimize_pdf(inp, out, mode=req.mode)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    record = _record_sync_result(db, user, "pdf_optimize", req.model_dump(), out.stem, out, res)
+    record.update(
+        {
+            "original_size_bytes": res["original_size_bytes"],
+            "reduction_pct": res["reduction_pct"],
+            "already_optimized": res["already_optimized"],
+            "readability_warning": res["readability_warning"],
+        }
+    )
+    return record
 
 
 class PdfManagerRequest(BaseModel):
