@@ -1,0 +1,8 @@
+# Production Dependency Tracker – PDF Studio
+
+| ID | Dependency | Responsible Team | Named Owner | Required Input | Planned Date | Current Status | Validation Steps | Evidence Location | Closure Date |
+|---|---|---|---|---|---|---|---|---|---|
+| A | Corporate OIDC / SSO | Identity Team | TBD | Issuer URL, Client ID, Redirect/Logout URIs, Group IDs (`Engineer`, `Team Lead`, `Admin`), token TTL | TBD | **NOT CONFIGURED** | Populate `.env`, set `OIDC_ENABLED=true` & `APP_ENV=production`, test 3 role logins + logout | [CORPORATE_SSO_VALIDATION.md](CORPORATE_SSO_VALIDATION.md) | TBD |
+| B | SQL Server Root CA & Strict TLS | DBA & Windows Infra | TBD | SQL Server Root CA `.cer` installed in `Cert:\LocalMachine\Root`; SAN matching `10.106.44.20` | TBD | **BLOCKED** | Set `DB_TRUST_SERVER_CERTIFICATE=no`, run `scripts/validate_production_readiness.ps1` & `alembic current` | [MSSQL_TLS_CUTOVER_EVIDENCE.md](MSSQL_TLS_CUTOVER_EVIDENCE.md) | TBD |
+| C | `pdfstudio_app` Credential Rotation | DBA Team | TBD | New vault-stored SQL password via `ALTER LOGIN [pdfstudio_app]` | TBD | **PENDING** | Update `.env`, run `scripts/test_mssql.ps1`, restart services, verify `/health/db` | [CREDENTIAL_ROTATION_EVIDENCE.md](CREDENTIAL_ROTATION_EVIDENCE.md) | TBD |
+| D | NSSM Services & TCP 8501 Firewall | Windows Infra & IT Security | TBD | Install NSSM, create `SVC_PDFStudio`, restrict `.env` ACLs, approve inbound TCP `8501` | TBD | **NOT CONFIGURED** | Run `scripts/validate_production_readiness.ps1`, verify `PDFStudio-*` services & port `8000` internal | [WINDOWS_SERVICE_VALIDATION.md](WINDOWS_SERVICE_VALIDATION.md) | TBD |
